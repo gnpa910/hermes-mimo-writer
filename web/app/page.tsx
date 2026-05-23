@@ -14,6 +14,7 @@ export default function HomePage() {
     "formal",
   );
   const [tokenCount, setTokenCount] = useState(0);
+  const [demoMode, setDemoMode] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   async function runSanitize() {
@@ -25,6 +26,7 @@ export default function HomePage() {
     setOutput("");
     setStreaming(true);
     setTokenCount(0);
+    setDemoMode(false);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -46,6 +48,10 @@ export default function HomePage() {
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      const isDemoMode = resp.headers.get("X-MiMo-Mode") === "demo-fallback";
+      if (isDemoMode) {
+        setOutput(""); // ensure clean start
+      }
 
       while (true) {
         const { done, value } = await reader.read();
@@ -60,6 +66,9 @@ export default function HomePage() {
           if (payload === "[DONE]") continue;
           try {
             const parsed = JSON.parse(payload);
+            if (parsed.meta) {
+              setDemoMode(true);
+            }
             if (parsed.chunk) {
               setOutput((prev) => prev + parsed.chunk);
               setTokenCount((n) => n + 1);
@@ -212,6 +221,14 @@ export default function HomePage() {
           {error && (
             <p className="mt-3 rounded border border-red-900 bg-red-950/40 p-2 text-xs text-red-300">
               {error}
+            </p>
+          )}
+          {demoMode && (
+            <p className="mt-3 rounded border border-amber-700/60 bg-amber-950/30 p-2 text-xs text-amber-200">
+              ⚡ <strong>Demo mode</strong> — this deployment is showing a cached
+              sanitization to keep the streaming UX functional. Set a real
+              <code className="mx-1 rounded bg-black/40 px-1">MIMO_API_KEY</code>
+              env var on your fork to call the live Token Plan API.
             </p>
           )}
         </div>
