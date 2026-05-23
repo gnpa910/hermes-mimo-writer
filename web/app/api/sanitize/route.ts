@@ -5,11 +5,9 @@
  * sanitized output. Mirrors the server-side AISanitizerAgent's prompt
  * so the demo matches the real CLI behavior.
  *
- * Demo-mode fallback: when MIMO_API_KEY is missing or set to the placeholder
- * value, we still stream back a high-quality cached sanitization so visitors
- * can see the agent's output shape end-to-end. This keeps the demo functional
- * for evaluators who don't have an API key handy. Disable by setting
- * MIMO_DEMO_FALLBACK=off.
+ * Falls back to a canned demo stream when MIMO_API_KEY is unset or a
+ * placeholder, so the public demo remains interactive without leaking
+ * production credits.
  */
 
 export const runtime = "edge";
@@ -29,27 +27,83 @@ Your job: rewrite the input section to:
 
 Output ONLY the rewritten prose. No commentary, no preamble.`;
 
-// Cached high-quality sanitization output for the default sample. Used in
-// demo-mode fallback so the streaming UX is preserved even without a real key.
-const DEMO_FALLBACK: Record<string, string> = {
-  en: `AI has reshaped how students learn. Not by replacing teachers — by giving each student a tutor that never tires. Personalized learning platforms read where a learner gets stuck and adjust on the fly. Adaptive systems work. Studies on early-grade math (and on undergraduate writing, where the effects are smaller but still measurable) show real gains in retention and engagement.
+const DEMO_RESPONSE_EN = `Artificial intelligence reshapes education in ways that surprise even its architects. Personalized pathways. That's the real shift. Adaptive platforms read each student's pace and rebuild the lesson around it, not the other way round.
 
-So what's the catch? Two things. First, these systems run on infrastructure that's wildly uneven across the world; the gap between a Jakarta university student with fiber and a rural one on patchy 4G is the gap between transformation and frustration. Second, the algorithms encode whatever the training data encoded — including its biases. Both problems are solvable. Neither solves itself.`,
-  id: `Kecerdasan buatan mengubah cara mahasiswa belajar. Bukan dengan menggantikan dosen — melainkan dengan memberikan setiap mahasiswa seorang tutor yang tak pernah lelah. Platform pembelajaran adaptif membaca di mana seorang pembelajar tersendat lalu menyesuaikan materinya secara langsung. Sistem semacam ini bekerja. Penelitian pada matematika kelas awal (juga pada penulisan tingkat sarjana, meski efeknya lebih kecil namun tetap terukur) menunjukkan peningkatan nyata dalam retensi dan partisipasi.
+Engagement climbs when the friction of "one size fits all" disappears (the data backs this up). What about the educators? They keep the work that matters most: judgment, mentorship, the unscripted Socratic moment. The algorithms handle the boilerplate.
 
-Lalu, di mana kendalanya? Ada dua. Pertama, sistem ini berjalan di atas infrastruktur yang sangat tidak merata; jarak antara mahasiswa Jakarta yang punya akses fiber dan mahasiswa pedesaan yang bergantung pada 4G berfluktuasi adalah jarak antara transformasi dan frustrasi. Kedua, algoritmanya mewarisi apa pun yang ada dalam data pelatihan — termasuk biasnya. Kedua masalah ini bisa diatasi. Namun tidak akan teratasi sendiri.`,
-};
+Will every classroom benefit equally? Probably not. But the gap narrows further each semester, and that's the metric worth tracking.`;
+
+const DEMO_RESPONSE_ID = `Kecerdasan buatan menata ulang pendidikan dengan cara yang kadang mengejutkan para perancangnya sendiri. Pembelajaran personal. Itu pergeseran sebenarnya. Platform adaptif membaca tempo setiap mahasiswa dan menyusun ulang materi mengikuti mereka, bukan sebaliknya.
+
+Partisipasi meningkat ketika gesekan "satu ukuran untuk semua" lenyap (data mendukungnya). Lalu peran dosen? Mereka memegang pekerjaan yang paling penting: pertimbangan, pembimbingan, momen Sokratik yang tidak terskenario. Algoritma menangani sisanya.
+
+Akankah setiap kelas terdampak setara? Mungkin belum. Tetapi jurang itu menyempit setiap semester, dan itulah metrik yang layak dilacak.`;
+
+const DEMO_RESPONSE_MS = `Kecerdasan buatan menyusun semula pendidikan dengan cara yang kadang-kadang mengejutkan pereka asalnya. Pembelajaran peribadi. Itulah peralihan sebenar. Platform adaptif membaca rentak setiap pelajar lalu membina semula pelajaran mengikut mereka, bukan sebaliknya.
+
+Penglibatan meningkat apabila geseran "satu saiz untuk semua" hilang (data menyokongnya). Bagaimana pula dengan pensyarah? Mereka memegang kerja yang paling bererti: pertimbangan, bimbingan, detik Sokratik yang tidak berskrip. Algoritma menguruskan yang rutin.
+
+Adakah setiap bilik darjah mendapat manfaat setara? Mungkin tidak. Tetapi jurang itu menyempit setiap semester, dan itulah metrik yang patut dipantau.`;
+
+const DEMO_RESPONSE_ZH = `人工智能正在以连设计者都意想不到的方式重塑教育。个性化路径。这才是真正的转折。自适应平台读取每位学生的节奏，再围绕节奏重组课程，而不是反过来。
+
+当"千人一面"的摩擦消失，参与度便会攀升（数据支持这一点）。那教师呢？他们继续做最要紧的工作：判断、指导、未经排练的苏格拉底式时刻。算法处理样板部分。
+
+每间教室都能等量受益吗？或许不会。但每一个学期，差距都在缩小——这才是值得追踪的指标。`;
+
+function pickDemoResponse(language: string): string {
+  switch (language) {
+    case "id":
+      return DEMO_RESPONSE_ID;
+    case "ms":
+      return DEMO_RESPONSE_MS;
+    case "zh":
+      return DEMO_RESPONSE_ZH;
+    default:
+      return DEMO_RESPONSE_EN;
+  }
+}
+
+function isPlaceholderKey(key: string | undefined): boolean {
+  if (!key) return true;
+  if (key.startsWith("tp-placeholder")) return true;
+  if (key.length < 12) return true;
+  return false;
+}
+
+function makeDemoStream(language: string): ReadableStream<Uint8Array> {
+  const text = pickDemoResponse(language);
+  const tokens: string[] = [];
+  const re = /(\s+|\S+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) tokens.push(m[1]);
+
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const banner =
+        "[DEMO MODE — Token Plan API key not configured on this deployment. " +
+        "Streaming a canned MiMo-style response so you can verify the SSE flow. " +
+        "Run the CLI locally with a real tp-... key for live MiMo output.]\n\n";
+      for (const tok of banner.match(/(\s+|\S+)/g) ?? []) {
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify({ chunk: tok })}\n\n`),
+        );
+        await new Promise((r) => setTimeout(r, 18));
+      }
+      for (const tok of tokens) {
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify({ chunk: tok })}\n\n`),
+        );
+        await new Promise((r) => setTimeout(r, /\S/.test(tok) ? 32 : 14));
+      }
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
+}
 
 export async function POST(req: Request) {
-  const apiKey = process.env.MIMO_API_KEY;
-  const fallbackEnabled = (process.env.MIMO_DEMO_FALLBACK ?? "on") !== "off";
-  const isPlaceholder =
-    !apiKey || apiKey === "" || apiKey.startsWith("tp-placeholder");
-
-  const endpoint =
-    process.env.MIMO_ENDPOINT ?? "https://token-plan-sgp.xiaomimimo.com/v1";
-  const model = process.env.MIMO_MODEL ?? "mimo-v2.5-pro";
-
   let body: { text?: string; language?: string; register?: string };
   try {
     body = await req.json();
@@ -62,17 +116,21 @@ export async function POST(req: Request) {
     return new Response("text must be at least 30 characters", { status: 400 });
   }
 
-  // Demo-mode fallback path (no real API key configured).
-  if (isPlaceholder && fallbackEnabled) {
-    return streamDemoFallback(language);
+  const apiKey = process.env.MIMO_API_KEY;
+  if (isPlaceholderKey(apiKey)) {
+    return new Response(makeDemoStream(language), {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Demo-Mode": "true",
+      },
+    });
   }
 
-  if (isPlaceholder) {
-    return new Response(
-      "MIMO_API_KEY not configured (set a real tp-... key, or enable MIMO_DEMO_FALLBACK)",
-      { status: 500 },
-    );
-  }
+  const endpoint =
+    process.env.MIMO_ENDPOINT ?? "https://token-plan-sgp.xiaomimimo.com/v1";
+  const model = process.env.MIMO_MODEL ?? "mimo-v2.5-pro";
 
   const userPrompt =
     `Language: ${language}\nRegister: ${register}\n\n` +
@@ -81,7 +139,7 @@ export async function POST(req: Request) {
   const upstream = await fetch(`${endpoint}/chat/completions`, {
     method: "POST",
     headers: {
-      "api-key": apiKey,
+      "api-key": apiKey!,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -98,12 +156,12 @@ export async function POST(req: Request) {
 
   if (!upstream.ok || !upstream.body) {
     const errBody = await upstream.text();
-    return new Response(`MiMo error ${upstream.status}: ${errBody.slice(0, 500)}`, {
-      status: upstream.status,
-    });
+    return new Response(
+      `MiMo error ${upstream.status}: ${errBody.slice(0, 500)}`,
+      { status: upstream.status },
+    );
   }
 
-  // Re-stream the SSE body, filtering to plain content chunks.
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder();
@@ -136,7 +194,9 @@ export async function POST(req: Request) {
                 "";
               if (delta) {
                 controller.enqueue(
-                  encoder.encode(`data: ${JSON.stringify({ chunk: delta })}\n\n`),
+                  encoder.encode(
+                    `data: ${JSON.stringify({ chunk: delta })}\n\n`,
+                  ),
                 );
               }
             } catch {
@@ -155,54 +215,6 @@ export async function POST(req: Request) {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
-    },
-  });
-}
-
-/**
- * Demo-mode fallback — streams a cached sanitization sample with realistic
- * pacing so the SSE UX looks identical to a live MiMo call. Used only when
- * no real API key is configured.
- */
-function streamDemoFallback(language: string): Response {
-  const text = DEMO_FALLBACK[language] ?? DEMO_FALLBACK.en;
-  // Tokenize roughly: words + spaces, mirroring how MiMo emits SSE chunks.
-  const tokens = text.match(/\S+\s*/g) ?? [text];
-
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const encoder = new TextEncoder();
-      // Pre-roll: signal demo mode in the first chunk via a comment-style line
-      // (which the client renders in the cursor, but logs in dev tools).
-      controller.enqueue(
-        encoder.encode(
-          `data: ${JSON.stringify({
-            chunk: "",
-            meta: "demo-mode (no API key configured)",
-          })}\n\n`,
-        ),
-      );
-
-      for (const tok of tokens) {
-        // Realistic per-token delay: 25-65ms, biased toward the lower end
-        // so the user perceives a smooth stream rather than a stutter.
-        const delay = 25 + Math.floor(Math.random() * 40);
-        await new Promise((r) => setTimeout(r, delay));
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify({ chunk: tok })}\n\n`),
-        );
-      }
-      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-      controller.close();
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-MiMo-Mode": "demo-fallback",
     },
   });
 }
