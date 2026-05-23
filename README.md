@@ -10,7 +10,8 @@
 <p align="center">
   <a href="https://hermes-mimo-writer.vercel.app">🔗 Live Demo</a> ·
   <a href="https://github.com/gnpa910/hermes-mimo-writer">📦 GitHub</a> ·
-  <a href="#getting-started">🚀 Getting Started</a>
+  <a href="#getting-started">🚀 Getting Started</a> ·
+  <a href="#web-demo">▶ Try the Sanitizer</a>
 </p>
 
 ---
